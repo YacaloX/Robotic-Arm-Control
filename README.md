@@ -132,7 +132,7 @@ Valida que los bloques del archivo `.aia` usen métodos reales de App Inventor (
 
 ## 📄 Licencia
 
-MIT — ver [LICENSE](LICENSE).
+Este proyecto cuenta con una [Licencia MIT](LICENSE).
 
 ## 👤 Autor
 
