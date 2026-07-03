@@ -1,4 +1,4 @@
-# Brazo Robótico N DOF
+# Brazo Robótico 6 DOF
 
 Control de brazo robótico multi-articulado vía USB Serial o Bluetooth SPP, con interfaz gráfica en Python (CustomTkinter), firmware ESP32 y app Android companion.
 
