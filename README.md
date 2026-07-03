@@ -128,6 +128,8 @@ python tests/test_aia_blocks.py
 
 Valida que los bloques del archivo `.aia` usen métodos reales de App Inventor (BluetoothClient, Notifier) y que las variables globales sean consistentes.
 
+El proyecto se realizó con un brazo robótico potenciado por 7 
+
 ---
 
 ## 📄 Licencia
@@ -136,4 +138,4 @@ Este proyecto cuenta con una [Licencia MIT](LICENSE).
 
 ## 👤 Autor
 
-**YacaloX**
+**Software y Firmware realizado por YacaloX, Hardware donado por Rafael Rojas Niño**
