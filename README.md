@@ -2,7 +2,7 @@
 
 Control de brazo robótico multi-articulado vía USB Serial o Bluetooth SPP, con interfaz gráfica en Python (CustomTkinter), firmware ESP32 y app Android companion.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![ESP32](https://img.shields.io/badge/ESP32-Arduino-green) ![MIT App Inventor](https://img.shields.io/badge/App_Inventor-AIA-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/Python-3.12%2B-blue) ![ESP32](https://img.shields.io/badge/ESP32-Arduino-green) ![MIT App Inventor](https://img.shields.io/badge/App_Inventor-AIA-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -136,4 +136,4 @@ MIT — ver [LICENSE](LICENSE).
 
 ## 👤 Autor
 
-**Jhoan Sebastián Rojas**
+**YacaloX**
