@@ -128,7 +128,7 @@ python tests/test_aia_blocks.py
 
 Valida que los bloques del archivo `.aia` usen métodos reales de App Inventor (BluetoothClient, Notifier) y que las variables globales sean consistentes.
 
-El proyecto se realizó con un brazo robótico potenciado por 7 
+El proyecto se realizó con un brazo robótico potenciado por 5 servomotores [Hextronik HX5010](https://servodatabase.com/servo/hextronik/hx5010) y 2 servomotores [Hextronik HXT12K](https://servodatabase.com/servo/hextronik/hxt12k), montados en una estructura de acrílico
 
 ---
 
