@@ -1,8 +1,8 @@
-# Brazo Robótico N DOF
+# Brazo Robótico 6 DOF
 
 Control de brazo robótico multi-articulado vía USB Serial o Bluetooth SPP, con interfaz gráfica en Python (CustomTkinter), firmware ESP32 y app Android companion.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![ESP32](https://img.shields.io/badge/ESP32-Arduino-green) ![MIT App Inventor](https://img.shields.io/badge/App_Inventor-AIA-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Python](https://img.shields.io/badge/Python-3.12%2B-blue) ![ESP32](https://img.shields.io/badge/ESP32-Arduino-green) ![MIT App Inventor](https://img.shields.io/badge/App_Inventor-AIA-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -128,12 +128,14 @@ python tests/test_aia_blocks.py
 
 Valida que los bloques del archivo `.aia` usen métodos reales de App Inventor (BluetoothClient, Notifier) y que las variables globales sean consistentes.
 
+El proyecto se realizó con un brazo robótico potenciado por 5 servomotores [Hextronik HX5010](https://servodatabase.com/servo/hextronik/hx5010) y 2 servomotores [Hextronik HXT12K](https://servodatabase.com/servo/hextronik/hxt12k), montados en una estructura de acrílico
+
 ---
 
 ## 📄 Licencia
 
-MIT — ver [LICENSE](LICENSE).
+Este proyecto cuenta con una [Licencia MIT](LICENSE).
 
 ## 👤 Autor
 
-**Jhoan Sebastián Rojas**
+**Software y Firmware realizado por YacaloX, Hardware donado por Rafael Rojas Niño**
