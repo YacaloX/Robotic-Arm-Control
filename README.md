@@ -13,6 +13,8 @@ Control de brazo robótico multi-articulado vía USB Serial o Bluetooth SPP, con
 - **Secuencias**: Grabación, edición y reproducción de movimientos con interpolación suave
 - **Keyframe compression**: Reduce grabaciones largas a posturas clave automáticamente
 - **Mando Xbox**: Control por joysticks analógicos (XInput en Windows)
+- **PSMove**: Control por movimiento con Sony PlayStation Move (orientación + tracking 3D)
+- **Wiimote**: Control por movimiento con Nintendo Wiimote (orientación + sensor IR)
 - **Paro de emergencia**: Botón y atajo `Ctrl+E` — envía HOME al instante
 - **Auto-reconexión Bluetooth**: Reintenta hasta 3 veces si la conexión se pierde
 - **App Android companion**: Escanea, conecta y controla desde un teléfono
@@ -27,6 +29,37 @@ Control de brazo robótico multi-articulado vía USB Serial o Bluetooth SPP, con
 ```bash
 pip install -r requirements.txt
 ```
+
+### Controladores de movimiento (opcional)
+
+#### Wiimote (Linux)
+```bash
+# Instalar dependencias Bluetooth
+sudo apt install libbluetooth-dev
+pip install pybluez wiimote.py
+
+# Emparejar Wiimote: presionar 1+2 o botón SYNC
+# La app detectará automáticamente el Wiimote
+```
+
+#### PSMove (Linux/macOS/Windows)
+```bash
+# Compilar psmoveapi desde fuente
+git clone https://github.com/thp/psmoveapi.git
+cd psmoveapi
+mkdir build && cd build
+cmake ..
+make
+
+# Configurar udev rules (Linux)
+sudo cp contrib/99-psmove.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+
+# Para pairing via Bluetooth:
+./psmove pair  # Conectar PSMove por USB primero
+```
+
+**Nota:** PSMove requiere conexión Bluetooth para acceder a sensores. USB solo permite LED y rumble.
 
 ### ESP32
 - Arduino IDE o PlatformIO
@@ -62,6 +95,7 @@ python main.pyw
 - Grabar secuencias con el botón 🔴 *Grabar*
 - Reproducir con ▶ *Reproducir*
 - En Windows, conectar mando Xbox para control analógico
+- Usar PSMove o Wiimote para control por movimiento
 
 ---
 
@@ -82,12 +116,16 @@ robotic_arm_control/
 │   ├── serial_manager.py       # Gestión de conexión serie USB
 │   ├── robot_arm.py            # Modelo del brazo robótico
 │   ├── sequence.py             # Reproductor de secuencias
+│   ├── motion_controller.py    # Interfaz base para motion controllers
+│   ├── psmove_controller.py    # Control por PS Move Motion Controller
+│   ├── wiimote_controller.py   # Control por Nintendo Wiimote
 │   └── xinput_controller.py    # Control por mando Xbox (Windows)
 ├── gui/
 │   ├── app.py                  # Ventana principal y orquestación
 │   ├── connection_frame.py     # Panel de conexión
 │   ├── control_frame.py        # Panel de control de servos
 │   ├── controller_frame.py     # Panel del mando Xbox
+│   ├── motion_controller_frame.py # Panel de control por movimiento
 │   ├── sequence_frame.py       # Panel de secuencias
 │   └── configurator_frame.py   # Ventana de configuración DOF/pines
 ├── utils/
@@ -120,6 +158,36 @@ Nota: las respuestas de error siguen el formato `Error: <descripcion>` y tambié
 
 ---
 
+## 🎮 Controladores de movimiento
+
+### Mapeo de PSMove
+| Entrada | Servo | Descripción |
+|---------|-------|-------------|
+| Pitch (inclinación) | Servo 1 (Hombro) | Inclinación hacia adelante/atrás |
+| Roll (rotación) | Servo 0 (Base) | Rotación izquierda/derecha |
+| Trigger | Servo 5 (Pinza) | Apertura de la pinza |
+| ▲ Triangle | Home | Posición inicial |
+| ● Circle | Guardar postura | Guardar postura actual |
+| ✕ Cross | Agregar postura | Agregar a secuencia |
+| ▶ Start | Play/Stop | Reproducir/secuencia |
+| ■ Select | Stop | Detener reproducción |
+
+### Mapeo de Wiimote
+| Entrada | Servo | Descripción |
+|---------|-------|-------------|
+| Pitch (inclinación) | Servo 1 (Hombro) | Inclinación hacia adelante/atrás |
+| Roll (rotación) | Servo 0 (Base) | Rotación izquierda/derecha |
+| IR X | Servo 3 (Rotación muñeca) | Posición horizontal del cursor |
+| IR Y | Servo 4 (Inclinación muñeca) | Posición vertical del cursor |
+| A | Home | Posición inicial |
+| B | Guardar postura | Guardar postura actual |
+| 1 | Agregar postura | Agregar a secuencia |
+| + | Play/Stop | Reproducir/secuencia |
+| - | Stop | Detener reproducción |
+| D-pad | Servos 2,5 | Ajuste fino ±3° |
+
+---
+
 ## 🧪 Tests
 
 ```bash
@@ -135,6 +203,19 @@ El proyecto se realizó con un brazo robótico potenciado por 5 servomotores [He
 ## 📄 Licencia
 
 Este proyecto cuenta con una [Licencia MIT](LICENSE).
+
+### Licencias de dependencias
+
+Este proyecto utiliza las siguientes librerías de terceros:
+
+| Librería | Licencia | Uso |
+|----------|----------|-----|
+| [wiimote.py](https://github.com/RaphaelWimmer/wiimote.py) | MIT | Control por Nintendo Wiimote |
+| [psmoveapi](https://github.com/thp/psmoveapi) | BSD | Control por PlayStation Move |
+| [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT | Interfaz gráfica |
+| [pyserial](https://github.com/pyserial/pyserial) | BSD | Conexión serie USB |
+
+**Nota:** Las licencias MIT y BSD son permisivas y permiten uso comercial, modificación y distribución.
 
 ## 👤 Autor
 

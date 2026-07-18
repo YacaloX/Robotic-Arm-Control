@@ -4,10 +4,13 @@ from core.bluetooth_manager import BluetoothManager
 from core.robot_arm import RobotArm
 from core.sequence import SequencePlayer
 from core.xinput_controller import XInputController
+from core.psmove_controller import PSMoveController
+from core.wiimote_controller import WiimoteController
 from gui.connection_frame import ConnectionFrame
 from gui.control_frame import ControlFrame
 from gui.sequence_frame import SequenceFrame
 from gui.controller_frame import ControllerFrame
+from gui.motion_controller_frame import MotionControllerFrame
 from gui.configurator_frame import ConfiguratorFrame
 from utils.theme import THEME, DARK, LIGHT
 from utils.config_manager import load_config
@@ -48,6 +51,8 @@ class RoboticArmApp(ctk.CTk):
         self._arm = RobotArm(self._serial, num_servos=num_servos, servo_pins=servo_pins)
         self._seq = SequencePlayer(self._arm, log_callback=self._log)
         self._controller = XInputController(log_callback=self._log)
+        self._psmove = PSMoveController(log_callback=self._log)
+        self._wiimote = WiimoteController(log_callback=self._log)
         self._theme_var = ctk.StringVar(value="dark")
         self._log_queue = Queue()
         self._smoothed_angles = [0] * num_servos
@@ -101,11 +106,20 @@ class RoboticArmApp(ctk.CTk):
         self._controller_frame.set_precision_callback(self._on_precision_toggle)
         self._controller_frame.set_sensitivity_callback(self._on_sensitivity_change)
         self._controller.set_connection_callback(self._on_controller_connection)
+        self._motion_frame = MotionControllerFrame(
+            left_panel, self._psmove, self._wiimote,
+            fg_color=("gray90", "gray20"),
+        )
+        self._motion_frame.grid(row=2, column=0, pady=(0, 8), sticky="ew")
+        self._motion_frame.set_toggle_callback(self._on_motion_toggle)
+        self._motion_frame.set_sensitivity_callback(self._on_motion_sensitivity)
+        self._psmove.set_connection_callback(self._on_motion_connection)
+        self._wiimote.set_connection_callback(self._on_motion_connection)
         self._control_frame = ControlFrame(
             left_panel, self._arm,
             fg_color=("gray90", "gray20"),
         )
-        self._control_frame.grid(row=2, column=0, sticky="nsew")
+        self._control_frame.grid(row=3, column=0, sticky="nsew")
         right_panel = ctk.CTkFrame(self, fg_color="transparent")
         right_panel.grid(row=1, column=1, padx=(5, 10), pady=(0, 10), sticky="nsew")
         right_panel.grid_rowconfigure(1, weight=1)
@@ -335,6 +349,25 @@ class RoboticArmApp(ctk.CTk):
     def _on_sensitivity_change(self, value):
         self._controller_sensitivity = value
 
+    def _on_motion_toggle(self, active):
+        ctrl = self._get_active_motion()
+        if ctrl:
+            ctrl.set_enabled(active)
+            self._control_frame.set_controller_active(active)
+
+    def _on_motion_sensitivity(self, value):
+        self._controller_sensitivity = value
+
+    def _on_motion_connection(self, connected):
+        self.after(0, lambda: self._motion_frame.set_connected(connected))
+
+    def _get_active_motion(self):
+        if self._psmove.is_connected:
+            return self._psmove
+        if self._wiimote.is_connected:
+            return self._wiimote
+        return None
+
     def _start_controller_polling(self):
         self._controller.start()
         self._poll_controller()
@@ -359,7 +392,40 @@ class RoboticArmApp(ctk.CTk):
                     self._control_frame.set_angles_silent(self._smoothed_angles)
                     self._send_if_changed()
 
+        motion = self._get_active_motion()
+        if motion and motion.enabled:
+            mbutton = motion.read_button()
+            while mbutton:
+                self._handle_controller_button(mbutton)
+                mbutton = motion.read_button()
+
+            mtarget = motion.read_target()
+            if mtarget is not None:
+                self._apply_motion_target(mtarget)
+            else:
+                mdelta = motion.read_delta()
+                while mdelta:
+                    idx, value = mdelta
+                    self._smoothed_angles[idx] = max(-90, min(90, self._smoothed_angles[idx] + value))
+                    mdelta = motion.read_delta()
+                if motion.enabled:
+                    self._control_frame.set_angles_silent(self._smoothed_angles)
+                    self._send_if_changed()
+
         self.after(self.UI_POLL_MS, self._poll_controller)
+
+    def _apply_motion_target(self, target):
+        lerp_factor = self._get_effective_lerp()
+        for i in range(len(target)):
+            t = target[i]
+            if t is None:
+                continue
+            current = self._smoothed_angles[i]
+            new_val = current + round((t - current) * lerp_factor)
+            self._smoothed_angles[i] = max(-90, min(90, new_val))
+
+        self._control_frame.set_angles_silent(self._smoothed_angles)
+        self._send_if_changed()
 
     def _handle_controller_button(self, action):
         if action == "home":
@@ -426,6 +492,10 @@ class RoboticArmApp(ctk.CTk):
             self._seq.stop()
         if self._controller:
             self._controller.stop()
+        if self._psmove:
+            self._psmove.stop()
+        if self._wiimote:
+            self._wiimote.stop()
         if self._serial.is_connected:
             self._serial.disconnect()
         if self._bt and self._bt.is_connected:
