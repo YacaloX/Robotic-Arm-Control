@@ -468,20 +468,6 @@ class BluetoothManager:
             except Exception:
                 pass
 
-    def _reset_hci(self):
-        for cmd in [
-            ["hciconfig", "hci0", "reset"],
-            ["sudo", "-n", "hciconfig", "hci0", "reset"],
-        ]:
-            try:
-                result = subprocess.run(cmd, capture_output=True, timeout=5)
-                if result.returncode == 0:
-                    self._log_queue.put("Adaptador Bluetooth reiniciado (HCI reset)")
-                    return
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                continue
-        self._log_queue.put("HCI reset no disponible")
-
     def _full_cleanup(self):
         with self._lock:
             self._connected = False
