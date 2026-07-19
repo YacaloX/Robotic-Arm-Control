@@ -266,8 +266,10 @@ class RoboticArmApp(ctk.CTk):
         self.after(500, self._poll_status)
 
     def _emergency_stop(self):
+        self._arm.cancel_ramp()
+        self._control_frame.cancel_ramp() if hasattr(self._control_frame, 'cancel_ramp') else None
         self._arm.home()
-        self._log("🛑 PARO DE EMERGENCIA — todos los servos a HOME")
+        self._log("PARO DE EMERGENCIA - todos los servos a HOME")
         self._last_cmd_msg = "PARO"
         self._update_status_bar()
 
@@ -390,6 +392,7 @@ class RoboticArmApp(ctk.CTk):
         if self._controller.enabled:
             target = self._controller.read_target()
             if target is not None:
+                self._arm.cancel_ramp()
                 self._apply_controller_target(target)
             else:
                 delta = self._controller.read_delta()
@@ -409,6 +412,9 @@ class RoboticArmApp(ctk.CTk):
                 mbutton = motion.read_button()
 
             mtarget = motion.read_target()
+            if mtarget is not None:
+                self._arm.cancel_ramp()
+                self._apply_motion_target(mtarget)
             if mtarget is not None:
                 self._apply_motion_target(mtarget)
             else:

@@ -1,5 +1,8 @@
 from __future__ import annotations
-from typing import List, Dict, Optional
+import math
+import threading
+import time
+from typing import List, Dict, Optional, Callable
 from utils.config_manager import get_servo_names
 from utils.theme import SERVO_PINS
 
@@ -19,6 +22,11 @@ class RobotArm:
         self._servo_pins = list(pins[:num_servos])
         self._current_angles: List[int] = [self.HOME_ANGLE] * self._num_servos
         self._servos: List[Dict] = []
+        self._ramp_stop = threading.Event()
+        self._ramp_thread: Optional[threading.Thread] = None
+        self._ramp_lock = threading.Lock()
+        self._ramp_active = False
+        self._ramp_progress_callback: Optional[Callable[[List[int]], None]] = None
         names = get_servo_names(self._num_servos)
         for i in range(self._num_servos):
             servo_min = self.GRIPPER_MIN_ANGLE if i == self.GRIPPER_SERVO_ID else self.MIN_ANGLE
@@ -98,3 +106,108 @@ class RobotArm:
                 "min": servo_min,
                 "max": servo_max,
             })
+
+    @property
+    def is_ramping(self) -> bool:
+        with self._ramp_lock:
+            return self._ramp_active
+
+    def set_ramp_progress_callback(self, callback: Optional[Callable[[List[int]], None]]):
+        self._ramp_progress_callback = callback
+
+    def cancel_ramp(self):
+        self._ramp_stop.set()
+        with self._ramp_lock:
+            self._ramp_active = False
+
+    def _wait_for_ramp_thread(self):
+        with self._ramp_lock:
+            if self._ramp_thread and self._ramp_thread.is_alive():
+                self._ramp_stop.set()
+                self._ramp_thread.join(timeout=1.0)
+            self._ramp_stop.clear()
+            self._ramp_active = True
+
+    def _ramp_done(self):
+        with self._ramp_lock:
+            self._ramp_active = False
+            self._ramp_thread = None
+
+    def move_all_ramped(self, target_angles: List[int], step_size: int = 5,
+                        delay_ms: int = 100, callback: Optional[Callable] = None):
+        self.cancel_ramp()
+        self._wait_for_ramp_thread()
+
+        targets = []
+        for i in range(min(len(target_angles), self._num_servos)):
+            targets.append(self.validate_angle(target_angles[i], i))
+        while len(targets) < self._num_servos:
+            targets.append(self._current_angles[len(targets)])
+
+        current = list(self._current_angles)
+        needs_move = any(current[i] != targets[i] for i in range(self._num_servos))
+
+        if not needs_move:
+            self._ramp_done()
+            return
+
+        def _ramp_worker():
+            try:
+                steps_per_servo = []
+                for i in range(self._num_servos):
+                    diff = abs(targets[i] - current[i])
+                    n = max(1, math.ceil(diff / step_size))
+                    steps_per_servo.append(n)
+                total_steps = max(steps_per_servo)
+                delay = max(0.001, delay_ms / 1000.0)
+
+                for step in range(1, total_steps + 1):
+                    if self._ramp_stop.is_set():
+                        return
+                    frame = []
+                    for i in range(self._num_servos):
+                        if total_steps == 1:
+                            angle = targets[i]
+                        else:
+                            t = step / total_steps
+                            angle = round(current[i] + (targets[i] - current[i]) * t)
+                        angle = self.validate_angle(angle, i)
+                        frame.append(angle)
+                    self.move_all(frame)
+                    if self._ramp_progress_callback:
+                        try:
+                            self._ramp_progress_callback(frame)
+                        except Exception:
+                            pass
+                    if step < total_steps:
+                        time.sleep(delay)
+            finally:
+                self._ramp_done()
+                if callback:
+                    try:
+                        callback()
+                    except Exception:
+                        pass
+
+        self._ramp_thread = threading.Thread(target=_ramp_worker, daemon=True)
+        self._ramp_thread.start()
+
+    def move_ramped(self, servo_id: int, target_angle: int, step_size: int = 5,
+                    delay_ms: int = 100, callback: Optional[Callable] = None):
+        if servo_id < 0 or servo_id >= self._num_servos:
+            return
+        target_angle = self.validate_angle(target_angle, servo_id)
+        angles = list(self._current_angles)
+        angles[servo_id] = target_angle
+        self.move_all_ramped(angles, step_size=step_size, delay_ms=delay_ms,
+                             callback=callback)
+
+    def home_ramped(self, step_size: int = 5, delay_ms: int = 100,
+                    callback: Optional[Callable] = None):
+        self.move_all_ramped([0] * self._num_servos, step_size=step_size,
+                             delay_ms=delay_ms, callback=callback)
+
+    def emergency_ramped(self, step_size: int = 10, delay_ms: int = 30,
+                         callback: Optional[Callable] = None):
+        self.move_all_ramped([0] * self._num_servos, step_size=step_size,
+                             delay_ms=delay_ms, callback=callback)

@@ -116,12 +116,14 @@ class ControlFrame(ctk.CTkFrame):
         new = max(s_min, min(s_max, current + delta))
         self._sliders[idx].set(new)
         self._value_labels[idx].configure(text=str(new))
-        self._arm.move(idx, new)
+        angles = self.get_angles()
+        self._arm.move_all_ramped(angles, step_size=5, delay_ms=100)
 
     def _on_slider_change(self, idx, value):
         angle = int(round(value))
         self._value_labels[idx].configure(text=str(angle))
         if self._enabled and not self._controller_active:
+            self._arm.cancel_ramp()
             self._arm.move(idx, angle)
 
     def set_angle(self, idx, angle):

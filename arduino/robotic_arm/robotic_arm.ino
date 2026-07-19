@@ -89,6 +89,74 @@ void respond(const String &msg, bool fromSerial) {
   }
 }
 
+int clampAngle(int angle, int servoId) {
+  angle = constrain(angle, -90, 90);
+  if (servoId == GRIPPER_SERVO_ID) {
+    angle = constrain(angle, GRIPPER_MIN_ANGLE, GRIPPER_MAX_ANGLE);
+  }
+  return angle;
+}
+
+void setServoImmediate(int servoId, int angle) {
+  angle = clampAngle(angle, servoId);
+  servos[servoId].currentAngle = angle;
+  ledcWrite(servos[servoId].channel, cmdToDuty(angle));
+}
+
+void rampAllServos(int targets[], int stepSize, int delayMs, bool fromSerial) {
+  if (numServos <= 0) {
+    respond("Error: no hay servos configurados", fromSerial);
+    return;
+  }
+
+  int startAngles[MAX_SERVOS];
+  int diffs[MAX_SERVOS];
+  int stepsNeeded[MAX_SERVOS];
+  int maxSteps = 0;
+
+  for (int i = 0; i < numServos; i++) {
+    startAngles[i] = servos[i].currentAngle;
+    int t = clampAngle(targets[i], i);
+    diffs[i] = t - startAngles[i];
+    stepsNeeded[i] = (abs(diffs[i]) + stepSize - 1) / stepSize;
+    if (stepsNeeded[i] < 1) stepsNeeded[i] = 1;
+    if (stepsNeeded[i] > maxSteps) maxSteps = stepsNeeded[i];
+  }
+
+  if (maxSteps <= 1) {
+    for (int i = 0; i < numServos; i++) {
+      setServoImmediate(i, targets[i]);
+    }
+    respond("RAMP_OK", fromSerial);
+    return;
+  }
+
+  for (int step = 1; step <= maxSteps; step++) {
+    for (int i = 0; i < numServos; i++) {
+      int angle;
+      if (maxSteps == 1) {
+        angle = targets[i];
+      } else {
+        angle = startAngles[i] + (diffs[i] * step + maxSteps / 2) / maxSteps;
+      }
+      setServoImmediate(i, angle);
+    }
+
+    if (step < maxSteps) {
+      unsigned long stepStart = millis();
+      while (millis() - stepStart < (unsigned long)delayMs) {
+        if (Serial.available() || (SerialBT.hasClient() && SerialBT.available())) {
+          respond("RAMP_CANCELLED", fromSerial);
+          return;
+        }
+        delay(2);
+      }
+    }
+  }
+
+  respond("RAMP_OK", fromSerial);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(500);
@@ -225,6 +293,44 @@ void processCommand(const String &input, const char *source) {
     return;
   }
 
+  if (input.startsWith("RAMPALL ")) {
+    String rest = input.substring(8);
+    rest.trim();
+    int angles[MAX_SERVOS];
+    int count = 0;
+    int startIdx = 0;
+    while (count < MAX_SERVOS + 2) {
+      int sp = rest.indexOf(' ', startIdx);
+      String token = (sp < 0) ? rest.substring(startIdx) : rest.substring(startIdx, sp);
+      token.trim();
+      if (token.length() > 0) {
+        if (count < numServos) {
+          angles[count] = token.toInt();
+        } else if (count == numServos) {
+          int stepSize = token.toInt();
+          if (stepSize < 1) stepSize = 5;
+          int delayMs = 100;
+          if (sp >= 0) {
+            int sp2 = rest.indexOf(' ', sp + 1);
+            String delayToken = (sp2 < 0) ? rest.substring(sp + 1) : rest.substring(sp + 1, sp2);
+            delayToken.trim();
+            if (delayToken.length() > 0) {
+              delayMs = delayToken.toInt();
+              if (delayMs < 1) delayMs = 100;
+            }
+          }
+          rampAllServos(angles, stepSize, delayMs, fromSerial);
+          return;
+        }
+        count++;
+      }
+      if (sp < 0) break;
+      startIdx = sp + 1;
+    }
+    respond("Error: RAMPALL esperaba " + String(numServos) + " angulos + stepSize + delayMs", fromSerial);
+    return;
+  }
+
   int separator = input.indexOf(' ');
   if (separator < 0) {
     respond("Error: formato invalido -> " + input, fromSerial);
@@ -245,8 +351,7 @@ void processCommand(const String &input, const char *source) {
     cmdAngle = constrain(cmdAngle, GRIPPER_MIN_ANGLE, GRIPPER_MAX_ANGLE);
   }
 
-  servos[servoId].currentAngle = cmdAngle;
-  ledcWrite(servos[servoId].channel, cmdToDuty(cmdAngle));
+  setServoImmediate(servoId, cmdAngle);
 
   respond("OK servo " + String(servoId) + " -> " + String(cmdAngle) + " deg", fromSerial);
 }

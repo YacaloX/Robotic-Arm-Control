@@ -152,16 +152,29 @@ class ConnectionFrame(ctk.CTkFrame):
             if choice and choice not in ("Sin dispositivos BT", "No disponible"):
                 m = re.search(r"\(([0-9A-F:]+)\)$", choice)
                 addr = m.group(1) if m else choice
-                try:
-                    ok = self._bt and self._bt.connect(addr)
-                except Exception:
-                    ok = False
-                if ok:
-                    self._on_connected(f"BT:{addr}")
-                else:
-                    self._on_connection_failed()
+                self._connect_btn.configure(state="disabled")
+                self._status_label.configure(
+                    text="Conectando...", text_color=("#868e96", "#909296"),
+                )
+                threading.Thread(
+                    target=self._bt_connect_thread, args=(addr,), daemon=True,
+                ).start()
             else:
                 self._status_label.configure(text="Seleccione un dispositivo BT")
+
+    def _bt_connect_thread(self, addr):
+        try:
+            ok = self._bt and self._bt.connect(addr)
+        except Exception:
+            ok = False
+        self.after(0, lambda: self._bt_connect_result(addr, ok))
+
+    def _bt_connect_result(self, addr, ok):
+        self._connect_btn.configure(state="normal")
+        if ok:
+            self._on_connected(f"BT:{addr}")
+        else:
+            self._on_connection_failed()
 
     def _on_connected(self, label):
         self._connect_btn.configure(

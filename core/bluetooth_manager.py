@@ -111,6 +111,8 @@ class BluetoothManager:
             self._log_queue.put("Socket directo falló — conectando vía bluetoothctl...")
             self._bluetoothctl_connect(address, timeout=min(15, remaining()))
             time.sleep(1.5)
+            self._reset_hci()
+            time.sleep(1.0)
             if time.time() - t0 <= timeout:
                 success = self._try_raw_socket(address)
 
@@ -285,7 +287,11 @@ class BluetoothManager:
             return None
         return result
 
-    def _try_rfcomm_bind(self, address):
+    def _try_rfcomm_bind(self, address, _retry=0):
+        if _retry >= 2:
+            self._log_queue.put("rfcomm bind agotado — no se pudo establecer conexión activa")
+            return False
+
         try:
             subprocess.run(["modprobe", "rfcomm"], capture_output=True, timeout=5)
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -381,7 +387,7 @@ class BluetoothManager:
             ser.close()
             self._serial = None
             subprocess.run(["rfcomm", "release", "0"], capture_output=True, timeout=3)
-            return self._try_rfcomm_bind(address)
+            return self._try_rfcomm_bind(address, _retry + 1)
 
         self._serial = ser
         self._rfcomm_bound = True
@@ -462,6 +468,20 @@ class BluetoothManager:
                     ser.close()
             except Exception:
                 pass
+
+    def _reset_hci(self):
+        for cmd in [
+            ["hciconfig", "hci0", "reset"],
+            ["sudo", "-n", "hciconfig", "hci0", "reset"],
+        ]:
+            try:
+                result = subprocess.run(cmd, capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    self._log_queue.put("Adaptador Bluetooth reiniciado (HCI reset)")
+                    return
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                continue
+        self._log_queue.put("HCI reset no disponible")
 
     def _full_cleanup(self):
         with self._lock:
