@@ -111,8 +111,6 @@ class BluetoothManager:
             self._log_queue.put("Socket directo falló — conectando vía bluetoothctl...")
             self._bluetoothctl_connect(address, timeout=min(15, remaining()))
             time.sleep(1.5)
-            self._reset_hci()
-            time.sleep(1.0)
             if time.time() - t0 <= timeout:
                 success = self._try_raw_socket(address)
 
@@ -288,7 +286,7 @@ class BluetoothManager:
         return result
 
     def _try_rfcomm_bind(self, address, _retry=0):
-        if _retry >= 2:
+        if _retry >= 3:
             self._log_queue.put("rfcomm bind agotado — no se pudo establecer conexión activa")
             return False
 
@@ -387,6 +385,7 @@ class BluetoothManager:
             ser.close()
             self._serial = None
             subprocess.run(["rfcomm", "release", "0"], capture_output=True, timeout=3)
+            time.sleep(2.0)
             return self._try_rfcomm_bind(address, _retry + 1)
 
         self._serial = ser
