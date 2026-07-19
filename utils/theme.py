@@ -65,7 +65,7 @@ SERVO_NAMES = [
     "Codo",
     "Rotación muñeca",
     "Inclinación muñeca",
-    "Rotación mano",
+    "Pinza",
 ]
 
 SERVO_PINS = [13, 12, 14, 27, 25, 26]

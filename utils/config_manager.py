@@ -12,7 +12,7 @@ SERVO_NAME_TEMPLATES = [
     "Codo",
     "Rotación muñeca",
     "Inclinación muñeca",
-    "Rotación mano",
+    "Pinza",
 ]
 
 DEFAULT_CONFIG = {
