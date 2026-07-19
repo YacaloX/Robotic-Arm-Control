@@ -19,6 +19,7 @@ class PSMoveController(MotionController):
         self._orientation = (0.0, 0.0)
         self._position = (0.0, 0.0, 0.0)
         self._trigger_value = 0.0
+        self._move_held = False
         self._poll_thread = None
         self._psmoveapi = None
 
@@ -126,6 +127,11 @@ class PSMoveController(MotionController):
                     pass
 
                 try:
+                    outer._move_held = controller.now_pressed(psmoveapi.Button.MOVE)
+                except Exception:
+                    pass
+
+                try:
                     btn = psmoveapi.Button
                     if controller.now_pressed(btn.TRIANGLE):
                         outer._put_button("home")
@@ -173,12 +179,15 @@ class PSMoveController(MotionController):
 
         target = [None] * 6
         target[0] = max(-90, min(90, round(roll * 2)))
-        target[1] = max(-90, min(90, round(pitch * 2)))
 
-        if trigger > self.TRIGGER_THRESHOLD:
-            gripper_range = self.GRIPPER_MAX_ANGLE - self.GRIPPER_MIN_ANGLE
-            target[5] = max(self.GRIPPER_MIN_ANGLE, min(self.GRIPPER_MAX_ANGLE,
-                           round(self.GRIPPER_MAX_ANGLE - trigger * gripper_range)))
+        if self._move_held:
+            target[4] = max(-90, min(90, round(pitch * 2)))
+        else:
+            target[1] = max(-90, min(90, round(pitch * 2)))
+
+        gripper_range = self.GRIPPER_MAX_ANGLE - self.GRIPPER_MIN_ANGLE
+        target[5] = max(self.GRIPPER_MIN_ANGLE, min(self.GRIPPER_MAX_ANGLE,
+                        round(self.GRIPPER_MIN_ANGLE + trigger * gripper_range)))
 
         self._put_target(target)
 
