@@ -10,6 +10,9 @@
 #define SERVO_MIN_US 544
 #define SERVO_MAX_US 2400
 #define BT_WATCHDOG_MS 20000
+#define GRIPPER_SERVO_ID 5
+#define GRIPPER_MIN_ANGLE -20
+#define GRIPPER_MAX_ANGLE 45
 
 struct ServoConfig {
   int pin;
@@ -237,6 +240,11 @@ void processCommand(const String &input, const char *source) {
   }
 
   cmdAngle = constrain(cmdAngle, -90, 90);
+
+  if (servoId == GRIPPER_SERVO_ID) {
+    cmdAngle = constrain(cmdAngle, GRIPPER_MIN_ANGLE, GRIPPER_MAX_ANGLE);
+  }
+
   servos[servoId].currentAngle = cmdAngle;
   ledcWrite(servos[servoId].channel, cmdToDuty(cmdAngle));
 

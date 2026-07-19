@@ -84,8 +84,13 @@ class ControlFrame(ctk.CTkFrame):
             row_widgets.append(inc_btn)
             self._inc_btns.append(inc_btn)
 
+            servo = self._arm.servos[i] if i < len(self._arm.servos) else None
+            s_min = servo["min"] if servo else -90
+            s_max = servo["max"] if servo else 90
+            num_steps = s_max - s_min
+
             slider = ctk.CTkSlider(
-                self, from_=-90, to=90, number_of_steps=180,
+                self, from_=s_min, to=s_max, number_of_steps=num_steps,
                 command=lambda v, idx=i: self._on_slider_change(idx, v),
                 progress_color=colors[i] if i < len(colors) else colors[-1],
                 button_color=colors[i] if i < len(colors) else colors[-1],
@@ -105,7 +110,10 @@ class ControlFrame(ctk.CTkFrame):
         if not self._enabled or self._controller_active:
             return
         current = int(round(self._sliders[idx].get()))
-        new = max(-90, min(90, current + delta))
+        servo = self._arm.servos[idx] if idx < len(self._arm.servos) else None
+        s_min = servo["min"] if servo else -90
+        s_max = servo["max"] if servo else 90
+        new = max(s_min, min(s_max, current + delta))
         self._sliders[idx].set(new)
         self._value_labels[idx].configure(text=str(new))
         self._arm.move(idx, new)
@@ -118,8 +126,12 @@ class ControlFrame(ctk.CTkFrame):
 
     def set_angle(self, idx, angle):
         if 0 <= idx < len(self._sliders):
+            servo = self._arm.servos[idx] if idx < len(self._arm.servos) else None
+            s_min = servo["min"] if servo else -90
+            s_max = servo["max"] if servo else 90
+            angle = max(s_min, min(s_max, int(round(angle))))
             self._sliders[idx].set(angle)
-            self._value_labels[idx].configure(text=str(int(round(angle))))
+            self._value_labels[idx].configure(text=str(angle))
 
     def set_angles(self, angles):
         for i, a in enumerate(angles):
@@ -136,8 +148,12 @@ class ControlFrame(ctk.CTkFrame):
     def set_angles_silent(self, angles):
         for i, a in enumerate(angles):
             if i < len(self._sliders):
+                servo = self._arm.servos[i] if i < len(self._arm.servos) else None
+                s_min = servo["min"] if servo else -90
+                s_max = servo["max"] if servo else 90
+                a = max(s_min, min(s_max, int(round(a))))
                 self._sliders[i].set(a)
-                self._value_labels[i].configure(text=str(int(round(a))))
+                self._value_labels[i].configure(text=str(a))
 
     def set_controller_active(self, active):
         self._controller_active = active

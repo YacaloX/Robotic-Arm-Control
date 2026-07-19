@@ -7,6 +7,9 @@ class PSMoveController(MotionController):
     POLL_INTERVAL = 1.0 / 60.0
     ACCEL_SCALE = 4.0
     TRIGGER_THRESHOLD = 0.1
+    GRIPPER_SERVO_ID = 5
+    GRIPPER_MIN_ANGLE = -20
+    GRIPPER_MAX_ANGLE = 45
 
     def __init__(self, log_callback=None):
         super().__init__(log_callback)
@@ -22,6 +25,34 @@ class PSMoveController(MotionController):
     @property
     def available(self) -> bool:
         try:
+            import psmoveapi as _pm
+            self._psmoveapi = _pm
+            return True
+        except ImportError:
+            return self._try_load_psmoveapi()
+
+    def _try_load_psmoveapi(self) -> bool:
+        import sys
+        import os
+
+        home = os.path.expanduser("~")
+        candidates = [
+            os.path.join(home, "psmoveapi", "bindings", "python"),
+            os.path.join(home, "psmoveapi", "build"),
+        ]
+
+        binding_dir = os.path.join(home, "psmoveapi", "bindings", "python")
+        if binding_dir not in sys.path and os.path.isfile(os.path.join(binding_dir, "psmoveapi.py")):
+            sys.path.insert(0, binding_dir)
+
+        lib_path = os.path.join(home, "psmoveapi", "build")
+        if not os.environ.get("PSMOVEAPI_LIBRARY_PATH") and os.path.isfile(os.path.join(lib_path, "libpsmoveapi.so")):
+            os.environ["PSMOVEAPI_LIBRARY_PATH"] = lib_path
+
+        try:
+            import importlib
+            if "psmoveapi" in sys.modules:
+                del sys.modules["psmoveapi"]
             import psmoveapi as _pm
             self._psmoveapi = _pm
             return True
@@ -145,7 +176,9 @@ class PSMoveController(MotionController):
         target[1] = max(-90, min(90, round(pitch * 2)))
 
         if trigger > self.TRIGGER_THRESHOLD:
-            target[5] = max(-90, min(90, round(-trigger * 90)))
+            gripper_range = self.GRIPPER_MAX_ANGLE - self.GRIPPER_MIN_ANGLE
+            target[5] = max(self.GRIPPER_MIN_ANGLE, min(self.GRIPPER_MAX_ANGLE,
+                           round(self.GRIPPER_MAX_ANGLE - trigger * gripper_range)))
 
         self._put_target(target)
 

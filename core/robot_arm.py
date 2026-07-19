@@ -8,6 +8,9 @@ class RobotArm:
     MIN_ANGLE = -90
     MAX_ANGLE = 90
     HOME_ANGLE = 0
+    GRIPPER_SERVO_ID = 5
+    GRIPPER_MIN_ANGLE = -20
+    GRIPPER_MAX_ANGLE = 45
 
     def __init__(self, transport, num_servos: int = 6, servo_pins: List[int] = None):
         self._transport = transport
@@ -18,12 +21,14 @@ class RobotArm:
         self._servos: List[Dict] = []
         names = get_servo_names(self._num_servos)
         for i in range(self._num_servos):
+            servo_min = self.GRIPPER_MIN_ANGLE if i == self.GRIPPER_SERVO_ID else self.MIN_ANGLE
+            servo_max = self.GRIPPER_MAX_ANGLE if i == self.GRIPPER_SERVO_ID else self.MAX_ANGLE
             self._servos.append({
                 "id": i,
                 "pin": self._servo_pins[i],
                 "name": names[i],
-                "min": self.MIN_ANGLE,
-                "max": self.MAX_ANGLE,
+                "min": servo_min,
+                "max": servo_max,
             })
 
     @property
@@ -43,13 +48,16 @@ class RobotArm:
         return list(self._current_angles)
 
     @staticmethod
-    def validate_angle(angle: int) -> int:
-        return max(-90, min(90, int(angle)))
+    def validate_angle(angle: int, servo_id: int = -1) -> int:
+        angle = max(-90, min(90, int(angle)))
+        if servo_id == RobotArm.GRIPPER_SERVO_ID:
+            angle = max(RobotArm.GRIPPER_MIN_ANGLE, min(RobotArm.GRIPPER_MAX_ANGLE, angle))
+        return angle
 
     def move(self, servo_id: int, angle: int) -> bool:
         if servo_id < 0 or servo_id >= self._num_servos:
             return False
-        angle = self.validate_angle(angle)
+        angle = self.validate_angle(angle, servo_id)
         self._current_angles[servo_id] = angle
         return self._transport.send(servo_id, angle)
 
@@ -57,7 +65,7 @@ class RobotArm:
         results = []
         n = min(len(angles), self._num_servos)
         for i in range(n):
-            angle = self.validate_angle(angles[i])
+            angle = self.validate_angle(angles[i], i)
             self._current_angles[i] = angle
             result = self._transport.send(i, angle)
             results.append(result)
@@ -81,10 +89,12 @@ class RobotArm:
         self._servos = []
         names = get_servo_names(self._num_servos)
         for i in range(self._num_servos):
+            servo_min = self.GRIPPER_MIN_ANGLE if i == self.GRIPPER_SERVO_ID else self.MIN_ANGLE
+            servo_max = self.GRIPPER_MAX_ANGLE if i == self.GRIPPER_SERVO_ID else self.MAX_ANGLE
             self._servos.append({
                 "id": i,
                 "pin": self._servo_pins[i],
                 "name": names[i],
-                "min": self.MIN_ANGLE,
-                "max": self.MAX_ANGLE,
+                "min": servo_min,
+                "max": servo_max,
             })

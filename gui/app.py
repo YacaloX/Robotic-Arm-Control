@@ -20,6 +20,9 @@ from queue import Queue, Empty
 class RoboticArmApp(ctk.CTk):
     LERP_FACTOR = 0.25
     UI_POLL_MS = 33
+    GRIPPER_SERVO_ID = 5
+    GRIPPER_MIN_ANGLE = -20
+    GRIPPER_MAX_ANGLE = 45
 
     def __init__(self):
         super().__init__()
@@ -42,6 +45,12 @@ class RoboticArmApp(ctk.CTk):
         if self._serial and self._serial.is_connected:
             return self._serial
         return None
+
+    def _clamp_angle(self, servo_id, angle):
+        angle = max(-90, min(90, int(round(angle))))
+        if servo_id == self.GRIPPER_SERVO_ID:
+            angle = max(self.GRIPPER_MIN_ANGLE, min(self.GRIPPER_MAX_ANGLE, angle))
+        return angle
 
     def _init_components(self):
         self._serial = SerialManager(baud=115200)
@@ -386,7 +395,7 @@ class RoboticArmApp(ctk.CTk):
                 delta = self._controller.read_delta()
                 while delta:
                     idx, value = delta
-                    self._smoothed_angles[idx] = max(-90, min(90, self._smoothed_angles[idx] + value))
+                    self._smoothed_angles[idx] = self._clamp_angle(idx, self._smoothed_angles[idx] + value)
                     delta = self._controller.read_delta()
                 if self._controller.enabled:
                     self._control_frame.set_angles_silent(self._smoothed_angles)
@@ -406,7 +415,7 @@ class RoboticArmApp(ctk.CTk):
                 mdelta = motion.read_delta()
                 while mdelta:
                     idx, value = mdelta
-                    self._smoothed_angles[idx] = max(-90, min(90, self._smoothed_angles[idx] + value))
+                    self._smoothed_angles[idx] = self._clamp_angle(idx, self._smoothed_angles[idx] + value)
                     mdelta = motion.read_delta()
                 if motion.enabled:
                     self._control_frame.set_angles_silent(self._smoothed_angles)
@@ -422,7 +431,7 @@ class RoboticArmApp(ctk.CTk):
                 continue
             current = self._smoothed_angles[i]
             new_val = current + round((t - current) * lerp_factor)
-            self._smoothed_angles[i] = max(-90, min(90, new_val))
+            self._smoothed_angles[i] = self._clamp_angle(i, new_val)
 
         self._control_frame.set_angles_silent(self._smoothed_angles)
         self._send_if_changed()
@@ -456,7 +465,7 @@ class RoboticArmApp(ctk.CTk):
         delta = self._controller.read_delta()
         while delta:
             idx, value = delta
-            self._smoothed_angles[idx] = max(-90, min(90, self._smoothed_angles[idx] + value))
+            self._smoothed_angles[idx] = self._clamp_angle(idx, self._smoothed_angles[idx] + value)
             delta = self._controller.read_delta()
 
         lerp_factor = self._get_effective_lerp()
