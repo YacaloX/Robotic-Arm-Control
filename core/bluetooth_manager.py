@@ -106,23 +106,33 @@ class BluetoothManager:
             self._full_cleanup()
             return False
 
-        # Step 2: bluetoothctl connect + raw socket
+        # Step 2: bluetoothctl pair+trust + raw socket
         if not success:
-            self._log_queue.put("Socket directo falló — conectando vía bluetoothctl...")
+            self._log_queue.put("Socket directo falló — emparejando vía bluetoothctl...")
             self._bluetoothctl_connect(address, timeout=min(15, remaining()))
-            time.sleep(1.5)
+            time.sleep(1.0)
             if time.time() - t0 <= timeout:
                 success = self._try_raw_socket(address)
 
-        # Step 3: último recurso — rfcomm bind
+        # Step 3: clean stale bond + raw socket (fix for broken bond state)
+        if not success and time.time() - t0 <= timeout:
+            self._log_queue.put("Socket directo falló — limpiando emparejamiento...")
+            self._bluetoothctl_remove(address)
+            time.sleep(1.0)
+            if time.time() - t0 <= timeout:
+                success = self._try_raw_socket(address)
+
+        # Step 4: último recurso — rfcomm bind
         if not success and time.time() - t0 <= timeout:
             self._log_queue.put("Socket directo no disponible — intentando rfcomm bind...")
             success = self._try_rfcomm_bind(address)
 
         if not success:
             self._log_queue.put(
-                "No se pudo conectar. Prueba: 1) Desconectar USB del ESP32  "
-                "2) bluetoothctl connect <MAC>  (MAC visible en la app)"
+                "No se pudo conectar. Prueba: "
+                "1) Reiniciar el ESP32 (desconectar y reconectar power)  "
+                "2) Desconectar USB del ESP32  "
+                "3) bluetoothctl remove <MAC> && bluetoothctl pair <MAC>"
             )
             self._full_cleanup()
             return False
@@ -202,7 +212,7 @@ class BluetoothManager:
         return False
 
     def _bluetoothctl_connect(self, address, timeout=15):
-        """Pair + trust + connect via bluetoothctl. Always returns True — let raw socket verify."""
+        """Pair + trust via bluetoothctl. Does NOT connect — let raw socket handle the link."""
         # First disconnect any existing link to the device
         try:
             subprocess.run(
@@ -224,26 +234,56 @@ class BluetoothManager:
             commands = (
                 f"agent on\ndefault-agent\n"
                 f"pair {address}\ntrust {address}\n"
-                f"connect {address}\n"
+                f"disconnect {address}\n"
                 f"exit\n"
             )
             proc.communicate(input=commands, timeout=timeout)
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             pass
 
-        # Verify connection state
+        # Verify bond state
         try:
             result = subprocess.run(
                 ["bluetoothctl", "info", address],
                 capture_output=True, text=True, timeout=5,
             )
             info_output = (result.stdout or "") + "\n" + (result.stderr or "")
-            if "Connected: yes" in info_output:
-                self._log_queue.put(f"Bluetooth conectado: {address}")
-                return True
+            if "Paired: yes" in info_output:
+                self._log_queue.put(f"Bluetooth emparejado: {address}")
+            # Always disconnect after pair+trust so raw socket can claim the link
+            try:
+                subprocess.run(
+                    ["bluetoothctl", "disconnect", address],
+                    capture_output=True, timeout=5,
+                )
+            except Exception:
+                pass
         except Exception:
             pass
         return True
+
+    def _bluetoothctl_remove(self, address):
+        """Remove bond to force fresh re-pairing on next raw socket."""
+        try:
+            subprocess.run(
+                ["bluetoothctl", "disconnect", address],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+        time.sleep(0.3)
+        try:
+            proc = subprocess.Popen(
+                ["bluetoothctl"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            proc.communicate(input=f"remove {address}\nexit\n", timeout=10)
+            self._log_queue.put(f"Emparejamiento eliminado: {address}")
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
 
     def _open_rfcomm_with_timeout(self, timeout=10, retries=2):
         ser = None
