@@ -594,8 +594,10 @@ class BluetoothManager:
         t0 = time.time()
         if is_socket:
             try:
+                prev_timeout = ser.gettimeout()
                 ser.settimeout(timeout)
                 ser.sendall(data_bytes)
+                ser.settimeout(prev_timeout if prev_timeout is not None else 0.1)
             except socket.timeout:
                 self._log_queue.put("Timeout BT al enviar datos")
                 return False
@@ -746,6 +748,7 @@ class BluetoothManager:
 
     def _reader_loop(self):
         buffer = ""
+        last_keepalive = time.time()
         while True:
             with self._lock:
                 if not self._running:
@@ -759,20 +762,41 @@ class BluetoothManager:
                 if is_socket:
                     data = ser.recv(1024).decode("utf-8", errors="replace")
                     if not data:
+                        self._log_queue.put("BT recv vacío — conexión cerrada por ESP32")
                         self._on_disconnect()
                         return
+                    last_keepalive = time.time()
                     buffer += data
                 else:
                     if not ser.is_open:
+                        self._log_queue.put("Puerto serial cerrado")
                         self._on_disconnect()
                         return
                     try:
                         data = ser.readline().decode("utf-8", errors="replace")
                         if data:
+                            last_keepalive = time.time()
                             buffer += data
                     except serial.SerialTimeoutException:
                         pass
                     except Exception:
+                        self._log_queue.put("Error leyendo serial")
+                        self._on_disconnect()
+                        return
+
+                if is_socket and time.time() - last_keepalive > 10:
+                    with self._lock:
+                        if self._serial is None or not self._running:
+                            break
+                    data_bytes = b"PING\n"
+                    try:
+                        prev = ser.gettimeout()
+                        ser.settimeout(3)
+                        ser.sendall(data_bytes)
+                        ser.settimeout(prev if prev is not None else 0.1)
+                        last_keepalive = time.time()
+                    except (OSError, socket.timeout):
+                        self._log_queue.put("BT keepalive falló — conexión perdida")
                         self._on_disconnect()
                         return
 
@@ -783,7 +807,8 @@ class BluetoothManager:
                         self._protocol.process_line(line, self._handshake_event)
             except socket.timeout:
                 pass
-            except (OSError, ConnectionError, serial.SerialException):
+            except (OSError, ConnectionError, serial.SerialException) as e:
+                self._log_queue.put(f"BT error: {type(e).__name__}: {e}")
                 self._on_disconnect()
                 return
             except Exception as e:
