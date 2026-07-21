@@ -198,7 +198,10 @@ class SerialManager:
         self._protocol._firmware_ready = False
         self._log_queue.put(f"Puerto {port} perdido")
         if self._disconnect_callback:
-            self._disconnect_callback()
+            try:
+                self._disconnect_callback()
+            except Exception:
+                pass
 
     def send(self, servo_id, angle):
         if not self.is_connected:

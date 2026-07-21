@@ -165,6 +165,7 @@ Nota: las respuestas de error siguen el formato `Error: <descripcion>` y tambié
 |---------|-------|-------------|
 | Pitch (inclinación) | Servo 1 (Hombro) | Inclinación hacia adelante/atrás |
 | Roll (rotación) | Servo 0 (Base) | Rotación izquierda/derecha |
+| Yaw (giro eje Z) | Servo 4 (Inclinación muñeca) | Giro del mando como volante |
 | Trigger | Servo 5 (Pinza) | Apertura de la pinza |
 | ▲ Triangle | Home | Posición inicial |
 | ● Circle | Guardar postura | Guardar postura actual |

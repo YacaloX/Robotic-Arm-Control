@@ -84,7 +84,7 @@ class MotionControllerFrame(ctk.CTkFrame):
         self._legend = ctk.CTkLabel(
             self,
             text=(
-                "PSMove: Pitch→Hombro  Roll→Base  Trigger→Pinza\n"
+                "PSMove: Pitch→Hombro  Roll→Base  Yaw→Rot.Muneca  Trigger→Pinza\n"
                 "Wiimote: Pitch→Hombro  Roll→Base  IR→Muñecas\n"
                 "PSMove: ▲Home  ●Guardar  ✕Agregar  ▶Play  ■Stop\n"
                 "Wiimote: A→Home  B→Guardar  1→Agregar  +→Play  −→Stop"

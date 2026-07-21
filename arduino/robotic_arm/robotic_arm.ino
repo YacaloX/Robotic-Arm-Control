@@ -9,7 +9,7 @@
 #define LEDC_BIT 10
 #define SERVO_MIN_US 544
 #define SERVO_MAX_US 2400
-#define BT_WATCHDOG_MS 20000
+#define BT_WATCHDOG_MS 30000
 #define GRIPPER_SERVO_ID 5
 #define GRIPPER_MIN_ANGLE -20
 #define GRIPPER_MAX_ANGLE 45
@@ -44,6 +44,7 @@ void configureServos(int n, int pins[]) {
   }
 
   delay(100);
+  yield();
 
   numServos = (n > MAX_SERVOS) ? MAX_SERVOS : (n < 0 ? 0 : n);
 
@@ -54,8 +55,10 @@ void configureServos(int n, int pins[]) {
     ledcSetup(i, LEDC_FREQ, LEDC_BIT);
     ledcAttachPin(pins[i], i);
     delay(150);
+    yield();
     ledcWrite(i, cmdToDuty(0));
     delay(150);
+    yield();
   }
 
   String msg = "CONFIG OK - " + String(numServos) + " servos en pines:";
@@ -73,6 +76,7 @@ void homeAllServos() {
     servos[i].currentAngle = 0;
     ledcWrite(servos[i].channel, cmdToDuty(0));
     delay(200);
+    yield();
   }
   String msg = "HOME - todos los servos a 0 deg";
   Serial.println(msg);
@@ -150,6 +154,7 @@ void rampAllServos(int targets[], int stepSize, int delayMs, bool fromSerial) {
           return;
         }
         delay(2);
+        yield();
       }
     }
   }
@@ -160,6 +165,7 @@ void rampAllServos(int targets[], int stepSize, int delayMs, bool fromSerial) {
 void setup() {
   Serial.begin(115200);
   delay(500);
+  yield();
 
   ledcFreq = ledcSetup(0, LEDC_FREQ, LEDC_BIT);
   ledcDetachPin(0);
@@ -180,7 +186,9 @@ void setup() {
 
   int defaultPins[MAX_SERVOS] = {13, 12, 14, 27, 25, 26};
   configureServos(MAX_SERVOS, defaultPins);
+  yield();
   homeAllServos();
+  yield();
 
   Serial.println("Brazo listo - ESP32 DevKit v1 (Serial + Bluetooth)");
 }
@@ -203,6 +211,7 @@ void loop() {
         Serial.println("BT watchdog: cliente inactivo");
         SerialBT.end();
         delay(100);
+        yield();
         SerialBT.begin(BT_NAME);
         btConnected = false;
         btBuffer = "";
@@ -227,6 +236,7 @@ void processStream(const char *source, Stream &stream, String &buffer, unsigned 
         buffer += c;
       }
     }
+    yield();
   }
   if (buffer.length() > 0 && (millis() - lastCharTime) > CMD_TIMEOUT_MS) {
     Serial.print("Timeout - buffer descartado por ");

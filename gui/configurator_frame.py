@@ -173,19 +173,22 @@ class ConfiguratorFrame(ctk.CTkToplevel):
         pins = [int(v.get()) for v in self._pin_vars[:dof]]
         self._test_btn.configure(state="disabled", text="Probando...")
 
-        # Enviar CONFIG temporal para probar
         self._transport.send_config(dof, pins)
 
-        # Mover cada servo -90° → 0° → +90° → 0° con pausa
-        for i in range(dof):
-            self._transport.send(i, -90)
-            self.after(400, lambda i=i: self._transport.send(i, 0))
-            self.after(800, lambda i=i: self._transport.send(i, 90))
-            self.after(1200, lambda i=i: self._transport.send(i, 0))
+        def _sweep_servo(servo_idx):
+            if servo_idx >= dof:
+                self._test_btn.configure(state="normal", text="Test Servos")
+                return
+            current = [0] * dof
+            for target_angle in [-90, 0, 90, 0]:
+                current[servo_idx] = target_angle
+                angles = list(current)
+                self._arm.move_all_ramped(angles, step_size=1, delay_ms=10)
+                import time as _t
+                _t.sleep(max(0.02, (abs(target_angle) + 1) * 0.02 + 0.2))
+            self.after(100, lambda: _sweep_servo(servo_idx + 1))
 
-        self.after(2000, lambda: self._test_btn.configure(
-            state="normal", text="Test Servos",
-        ))
+        _sweep_servo(0)
 
     def _apply_config(self):
         dof = self._dof_var.get()

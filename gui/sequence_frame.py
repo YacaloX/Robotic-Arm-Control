@@ -154,7 +154,7 @@ class SequenceFrame(ctk.CTkFrame):
         self._speed_value.configure(text=f"{value:.1f}×")
 
     def home(self):
-        self._arm.home_ramped(step_size=5, delay_ms=100,
+        self._arm.home_ramped(step_size=1, delay_ms=10,
                               callback=lambda: self._control.set_angles([0] * self._arm.num_servos))
 
     def save_posture(self):

@@ -22,6 +22,14 @@ CONFIG_FILE = CONFIG_DIR / "bluetooth.json"
 
 
 class BluetoothManager:
+    KEEPALIVE_INTERVAL = 5
+    KEEPALIVE_TIMEOUT = 3
+    RECV_BUFFER_SIZE = 4096
+    SEND_RETRIES = 3
+    SEND_RETRY_DELAY = 0.05
+    RECONNECT_MAX = 5
+    RECONNECT_DELAYS = [1.0, 2.0, 3.0, 5.0, 8.0]
+
     def __init__(self, baud=115200):
         self._serial = None
         self._connected = False
@@ -38,10 +46,13 @@ class BluetoothManager:
         self._handshake_event = threading.Event()
         self._reconnect_enabled = True
         self._reconnect_count = 0
-        self._reconnect_max = 3
+        self._reconnect_max = self.RECONNECT_MAX
         self._reconnect_timer = None
         self._reconnect_callback = None
+        self._reconnect_success_callback = None
         self._reconnecting = False
+        self._send_lock = threading.Lock()
+        self._last_send_time = 0.0
 
     @property
     def is_connected(self):
@@ -73,6 +84,9 @@ class BluetoothManager:
 
     def set_reconnect_callback(self, callback):
         self._reconnect_callback = callback
+
+    def set_reconnect_success_callback(self, callback):
+        self._reconnect_success_callback = callback
 
     def get_log(self, timeout=0.05):
         try:
@@ -142,7 +156,7 @@ class BluetoothManager:
             self._running = True
 
         if self._is_socket:
-            self._serial.settimeout(0.1)
+            self._serial.settimeout(0.2)
         else:
             fd = self._serial.fileno()
             flags = fcntl.fcntl(fd, fcntl.F_GETFL)
@@ -196,9 +210,18 @@ class BluetoothManager:
             try:
                 sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 0)
-                sock.settimeout(2.0)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, self.RECV_BUFFER_SIZE)
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                except (OSError, AttributeError):
+                    pass
+                try:
+                    sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 60000, 30000))
+                except (OSError, AttributeError, NameError):
+                    pass
+                sock.settimeout(5.0)
                 sock.connect((address, channel))
-                sock.settimeout(0.1)
+                sock.settimeout(0.2)
                 self._serial = sock
                 self._is_socket = True
                 self._log_queue.put(f"Conexión Bluetooth por socket directo (canal {channel})")
@@ -466,25 +489,13 @@ class BluetoothManager:
         with self._lock:
             self._running = False
             self._protocol._firmware_ready = False
+            was_rfcomm = self._rfcomm_bound
         if self._reader_thread and self._reader_thread.is_alive():
             self._reader_thread.join(timeout=1.0)
         addr = self._address
         self._close_serial()
-        if self._rfcomm_bound:
-            try:
-                subprocess.run(["rfcomm", "release", "0"], capture_output=True, timeout=3)
-            except subprocess.TimeoutExpired:
-                self._log_queue.put("rfcomm release 0 timed out durante disconnect")
-                subprocess.run(["pkill", "-f", "rfcomm"], capture_output=True)
-            except (FileNotFoundError, OSError):
-                pass
-            try:
-                subprocess.run(
-                    ["sudo", "-n", "rfcomm", "release", "0"],
-                    capture_output=True, timeout=10,
-                )
-            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                pass
+        if was_rfcomm:
+            threading.Thread(target=self._release_rfcomm, daemon=True).start()
         with self._lock:
             self._rfcomm_bound = False
             self._connected = False
@@ -492,6 +503,21 @@ class BluetoothManager:
             self._reconnect_count = 0
         if addr:
             self._log_queue.put(f"Desconectado de {addr}")
+
+    def _release_rfcomm(self):
+        try:
+            subprocess.run(["rfcomm", "release", "0"], capture_output=True, timeout=3)
+        except subprocess.TimeoutExpired:
+            subprocess.run(["pkill", "-9", "-f", "rfcomm"], capture_output=True, timeout=3)
+        except (FileNotFoundError, OSError):
+            pass
+        try:
+            subprocess.run(
+                ["sudo", "-n", "rfcomm", "release", "0"],
+                capture_output=True, timeout=5,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
 
     def _close_serial(self):
         ser = None
@@ -502,6 +528,10 @@ class BluetoothManager:
         if ser:
             try:
                 if self._is_socket:
+                    try:
+                        ser.settimeout(0.5)
+                    except Exception:
+                        pass
                     ser.close()
                 elif hasattr(ser, "is_open") and ser.is_open:
                     ser.close()
@@ -512,13 +542,7 @@ class BluetoothManager:
         with self._lock:
             self._connected = False
         self._close_serial()
-        try:
-            subprocess.run(["rfcomm", "release", "0"], capture_output=True, timeout=3)
-        except subprocess.TimeoutExpired:
-            self._log_queue.put("rfcomm release 0 timed out durante cleanup")
-            subprocess.run(["pkill", "-f", "rfcomm"], capture_output=True)
-        except (FileNotFoundError, OSError):
-            pass
+        threading.Thread(target=self._release_rfcomm, daemon=True).start()
         self._rfcomm_bound = False
 
     def _do_handshake(self):
@@ -529,19 +553,30 @@ class BluetoothManager:
             if ser is None:
                 return False
             for ping_cmd in ["PING\r\n", "PING\n"]:
-                for attempt in range(2):
+                for attempt in range(3):
                     if is_socket:
-                        ser.settimeout(5)
-                        ser.sendall(ping_cmd.encode())
+                        try:
+                            ser.settimeout(5)
+                            ser.sendall(ping_cmd.encode())
+                        except (OSError, socket.timeout):
+                            self._log_queue.put(f"Handshake send falló (intento {attempt + 1})")
+                            time.sleep(0.3)
+                            continue
                     else:
-                        ser.write(ping_cmd.encode())
-                        ser.flush()
+                        try:
+                            ser.write(ping_cmd.encode())
+                            ser.flush()
+                        except Exception:
+                            self._log_queue.put(f"Handshake write falló (intento {attempt + 1})")
+                            time.sleep(0.3)
+                            continue
                     t0 = time.time()
                     while time.time() - t0 < 5:
                         try:
                             if is_socket:
-                                ser.settimeout(min(1.0, 5 - (time.time() - t0)))
-                                resp = ser.recv(1024).decode("utf-8", errors="replace")
+                                remaining = 5 - (time.time() - t0)
+                                ser.settimeout(min(1.0, max(0.1, remaining)))
+                                resp = ser.recv(4096).decode("utf-8", errors="replace")
                             else:
                                 resp = ser.read_until(b'\n').decode("utf-8", errors="replace")
                             if resp:
@@ -554,16 +589,10 @@ class BluetoothManager:
                                     self._log_queue.put(f"RX: {line}")
                         except serial.SerialTimeoutException:
                             pass
-                        except OSError:
+                        except (OSError, socket.timeout):
                             pass
-                    else:
-                        self._log_queue.put(f"Handshake intento {attempt + 1}/2 ({ping_cmd!r}) falló")
-                        time.sleep(0.5)
-                        continue
-                    break
-                else:
-                    continue
-                break
+                    self._log_queue.put(f"Handshake intento {attempt + 1}/3 ({ping_cmd!r}) falló")
+                    time.sleep(0.5)
             if hretry < 2:
                 self._log_queue.put("Reconectando rfcomm para reintentar handshake...")
                 self._close_serial()
@@ -593,25 +622,36 @@ class BluetoothManager:
             is_socket = self._is_socket
         t0 = time.time()
         if is_socket:
-            try:
-                prev_timeout = ser.gettimeout()
-                ser.settimeout(timeout)
-                ser.sendall(data_bytes)
-                ser.settimeout(prev_timeout if prev_timeout is not None else 0.1)
-            except socket.timeout:
-                self._log_queue.put("Timeout BT al enviar datos")
-                return False
-            except OSError as e:
-                self._log_queue.put(f"Error BT al escribir: {e}")
-                self._on_disconnect()
-                return False
+            for attempt in range(self.SEND_RETRIES):
+                try:
+                    prev_timeout = ser.gettimeout()
+                    ser.settimeout(timeout)
+                    ser.sendall(data_bytes)
+                    ser.settimeout(prev_timeout if prev_timeout is not None else 0.2)
+                    return True
+                except socket.timeout:
+                    if attempt < self.SEND_RETRIES - 1:
+                        time.sleep(self.SEND_RETRY_DELAY)
+                        continue
+                    self._log_queue.put("Timeout BT al enviar datos (reintentos agotados)")
+                    return False
+                except OSError as e:
+                    if attempt < self.SEND_RETRIES - 1:
+                        time.sleep(self.SEND_RETRY_DELAY)
+                        continue
+                    self._log_queue.put(f"Error BT al escribir: {e}")
+                    self._on_disconnect()
+                    return False
+            return False
         else:
             total = 0
             fd = ser.fileno()
             while total < len(data_bytes):
                 remaining = timeout - (time.time() - t0)
                 if remaining <= 0:
-                    return False
+                    if total < len(data_bytes):
+                        self._log_queue.put("Timeout serial al enviar datos")
+                    return total >= len(data_bytes)
                 _, wlist, _ = select.select([], [fd], [], min(remaining, 1.0))
                 if not wlist:
                     continue
@@ -749,6 +789,7 @@ class BluetoothManager:
     def _reader_loop(self):
         buffer = ""
         last_keepalive = time.time()
+        last_data_time = time.time()
         while True:
             with self._lock:
                 if not self._running:
@@ -760,13 +801,23 @@ class BluetoothManager:
 
             try:
                 if is_socket:
-                    data = ser.recv(1024).decode("utf-8", errors="replace")
-                    if not data:
-                        self._log_queue.put("BT recv vacío — conexión cerrada por ESP32")
+                    try:
+                        data = ser.recv(self.RECV_BUFFER_SIZE).decode("utf-8", errors="replace")
+                    except socket.timeout:
+                        data = ""
+                    except OSError:
+                        self._log_queue.put("BT recv error - conexión perdida")
                         self._on_disconnect()
                         return
-                    last_keepalive = time.time()
-                    buffer += data
+                    if is_socket and not data:
+                        if time.time() - last_data_time > 15:
+                            self._log_queue.put("BT recv vacío prolongado — conexión cerrada")
+                            self._on_disconnect()
+                            return
+                    else:
+                        last_data_time = time.time()
+                        last_keepalive = time.time()
+                        buffer += data
                 else:
                     if not ser.is_open:
                         self._log_queue.put("Puerto serial cerrado")
@@ -776,6 +827,7 @@ class BluetoothManager:
                         data = ser.readline().decode("utf-8", errors="replace")
                         if data:
                             last_keepalive = time.time()
+                            last_data_time = time.time()
                             buffer += data
                     except serial.SerialTimeoutException:
                         pass
@@ -784,21 +836,26 @@ class BluetoothManager:
                         self._on_disconnect()
                         return
 
-                if is_socket and time.time() - last_keepalive > 10:
+                if is_socket and time.time() - last_keepalive > self.KEEPALIVE_INTERVAL:
                     with self._lock:
                         if self._serial is None or not self._running:
                             break
                     data_bytes = b"PING\n"
-                    try:
-                        prev = ser.gettimeout()
-                        ser.settimeout(3)
-                        ser.sendall(data_bytes)
-                        ser.settimeout(prev if prev is not None else 0.1)
-                        last_keepalive = time.time()
-                    except (OSError, socket.timeout):
-                        self._log_queue.put("BT keepalive falló — conexión perdida")
-                        self._on_disconnect()
-                        return
+                    for attempt in range(2):
+                        try:
+                            prev = ser.gettimeout()
+                            ser.settimeout(self.KEEPALIVE_TIMEOUT)
+                            ser.sendall(data_bytes)
+                            ser.settimeout(prev if prev is not None else 0.2)
+                            last_keepalive = time.time()
+                            break
+                        except (OSError, socket.timeout):
+                            if attempt == 0:
+                                time.sleep(0.1)
+                            else:
+                                self._log_queue.put("BT keepalive falló — conexión perdida")
+                                self._on_disconnect()
+                                return
 
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
@@ -826,10 +883,11 @@ class BluetoothManager:
             addr = self._address
             self._address = None
         self._close_serial()
-        if was_connected:
-            self._log_queue.put(f"Conexión Bluetooth {addr} perdida")
-            if self._disconnect_callback:
+        if was_connected and self._disconnect_callback:
+            try:
                 self._disconnect_callback()
+            except Exception:
+                pass
             self._try_reconnect(addr)
 
     def _cancel_reconnect(self):
@@ -851,8 +909,10 @@ class BluetoothManager:
         self._reconnect_count += 1
         if self._reconnect_callback:
             self._reconnect_callback(self._reconnect_count, self._reconnect_max)
-        self._log_queue.put(f"Reconectando ({self._reconnect_count}/{self._reconnect_max})...")
-        self._reconnect_timer = threading.Timer(3.0, self._do_reconnect, args=[addr])
+        delay_idx = min(self._reconnect_count - 1, len(self.RECONNECT_DELAYS) - 1)
+        delay = self.RECONNECT_DELAYS[delay_idx]
+        self._log_queue.put(f"Reconectando ({self._reconnect_count}/{self._reconnect_max}) en {delay}s...")
+        self._reconnect_timer = threading.Timer(delay, self._do_reconnect, args=[addr])
         self._reconnect_timer.daemon = True
         self._reconnect_timer.start()
 
@@ -872,6 +932,8 @@ class BluetoothManager:
         if ok:
             self._reconnect_count = 0
             self._log_queue.put("Reconexión exitosa")
+            if self._reconnect_success_callback:
+                self._reconnect_success_callback()
         else:
             self._log_queue.put("Reconexión falló")
             self._try_reconnect(addr)

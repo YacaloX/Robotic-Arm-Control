@@ -6,12 +6,15 @@ from core.sequence import SequencePlayer
 from core.xinput_controller import XInputController
 from core.psmove_controller import PSMoveController
 from core.wiimote_controller import WiimoteController
+from core.camera import CameraManager
+from core.auto_calibrator import AutoCalibrator
 from gui.connection_frame import ConnectionFrame
 from gui.control_frame import ControlFrame
 from gui.sequence_frame import SequenceFrame
 from gui.controller_frame import ControllerFrame
 from gui.motion_controller_frame import MotionControllerFrame
 from gui.configurator_frame import ConfiguratorFrame
+from gui.calibration_frame import CalibrationFrame
 from utils.theme import THEME, DARK, LIGHT
 from utils.config_manager import load_config
 from queue import Queue, Empty
@@ -38,6 +41,7 @@ class RoboticArmApp(ctk.CTk):
         if self._bt:
             self._bt.set_disconnect_callback(self._on_port_lost)
             self._bt.set_reconnect_callback(self._on_reconnect_attempt)
+            self._bt.set_reconnect_success_callback(lambda: self.after(0, self._on_connected))
 
     def _get_transport(self):
         if self._bt and self._bt.is_connected:
@@ -62,6 +66,8 @@ class RoboticArmApp(ctk.CTk):
         self._controller = XInputController(log_callback=self._log)
         self._psmove = PSMoveController(log_callback=self._log)
         self._wiimote = WiimoteController(log_callback=self._log)
+        self._camera = CameraManager(log_callback=self._log)
+        self._calibrator = AutoCalibrator(self._arm, self._camera, log_callback=self._log)
         self._theme_var = ctk.StringVar(value="dark")
         self._log_queue = Queue()
         self._smoothed_angles = [0] * num_servos
@@ -94,7 +100,8 @@ class RoboticArmApp(ctk.CTk):
         left_panel.grid(row=1, column=0, padx=(10, 5), pady=(0, 10), sticky="nsew")
         left_panel.grid_rowconfigure(0, weight=0)
         left_panel.grid_rowconfigure(1, weight=0)
-        left_panel.grid_rowconfigure(2, weight=1)
+        left_panel.grid_rowconfigure(2, weight=0)
+        left_panel.grid_rowconfigure(3, weight=1)
         left_panel.grid_columnconfigure(0, weight=1)
         self._connection_frame = ConnectionFrame(
             left_panel, self._serial, bluetooth_manager=self._bt,
@@ -124,11 +131,20 @@ class RoboticArmApp(ctk.CTk):
         self._motion_frame.set_sensitivity_callback(self._on_motion_sensitivity)
         self._psmove.set_connection_callback(self._on_motion_connection)
         self._wiimote.set_connection_callback(self._on_motion_connection)
+        if self._camera.available:
+            self._calibration_frame = CalibrationFrame(
+                left_panel, self._camera, self._calibrator,
+                log_callback=self._log,
+                fg_color=("gray90", "gray20"),
+            )
+            self._calibration_frame.grid(row=3, column=0, pady=(0, 8), sticky="ew")
+        else:
+            self._calibration_frame = None
         self._control_frame = ControlFrame(
             left_panel, self._arm,
             fg_color=("gray90", "gray20"),
         )
-        self._control_frame.grid(row=3, column=0, sticky="nsew")
+        self._control_frame.grid(row=4, column=0, sticky="nsew")
         right_panel = ctk.CTkFrame(self, fg_color="transparent")
         right_panel.grid(row=1, column=1, padx=(5, 10), pady=(0, 10), sticky="nsew")
         right_panel.grid_rowconfigure(1, weight=1)
@@ -266,10 +282,10 @@ class RoboticArmApp(ctk.CTk):
         self.after(500, self._poll_status)
 
     def _emergency_stop(self):
-        self._arm.cancel_ramp()
+        self._arm.emergency_stop()
         self._control_frame.cancel_ramp() if hasattr(self._control_frame, 'cancel_ramp') else None
-        self._arm.home()
-        self._log("PARO DE EMERGENCIA - todos los servos a HOME")
+        self._control_frame.set_angles([0] * self._arm.num_servos)
+        self._log("PARO DE EMERGENCIA - todos los servos a HOME (inmediato)")
         self._last_cmd_msg = "PARO"
         self._update_status_bar()
 
@@ -415,8 +431,6 @@ class RoboticArmApp(ctk.CTk):
             if mtarget is not None:
                 self._arm.cancel_ramp()
                 self._apply_motion_target(mtarget)
-            if mtarget is not None:
-                self._apply_motion_target(mtarget)
             else:
                 mdelta = motion.read_delta()
                 while mdelta:
@@ -430,13 +444,22 @@ class RoboticArmApp(ctk.CTk):
         self.after(self.UI_POLL_MS, self._poll_controller)
 
     def _apply_motion_target(self, target):
-        lerp_factor = self._get_effective_lerp()
+        base_lerp = self._get_effective_lerp()
         for i in range(len(target)):
             t = target[i]
             if t is None:
                 continue
             current = self._smoothed_angles[i]
-            new_val = current + round((t - current) * lerp_factor)
+            raw_delta = abs(t - current)
+            if raw_delta > 30:
+                lerp = min(1.0, base_lerp * 4)
+            elif raw_delta > 15:
+                lerp = base_lerp * 2.5
+            elif raw_delta > 5:
+                lerp = base_lerp * 1.5
+            else:
+                lerp = base_lerp
+            new_val = current + round((t - current) * lerp)
             self._smoothed_angles[i] = self._clamp_angle(i, new_val)
 
         self._control_frame.set_angles_silent(self._smoothed_angles)
@@ -458,9 +481,15 @@ class RoboticArmApp(ctk.CTk):
             self._sequence_frame.stop()
 
     def _send_if_changed(self):
-        if self._smoothed_angles != self._last_sent_angles:
-            self._last_sent_angles = list(self._smoothed_angles)
-            self._arm.move_all(self._smoothed_angles)
+        if self._smoothed_angles == self._last_sent_angles:
+            return
+        max_delta = max(abs(self._smoothed_angles[i] - self._last_sent_angles[i])
+                        for i in range(len(self._smoothed_angles)))
+        self._last_sent_angles = list(self._smoothed_angles)
+        if max_delta > 3:
+            self._arm.move_all_ramped(self._smoothed_angles, step_size=1, delay_ms=10)
+        else:
+            self._arm.move_all_immediate(self._smoothed_angles)
 
     def _get_effective_lerp(self):
         if self._precision_mode:
@@ -511,6 +540,8 @@ class RoboticArmApp(ctk.CTk):
             self._psmove.stop()
         if self._wiimote:
             self._wiimote.stop()
+        if self._camera:
+            self._camera.close()
         if self._serial.is_connected:
             self._serial.disconnect()
         if self._bt and self._bt.is_connected:

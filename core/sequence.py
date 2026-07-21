@@ -8,6 +8,8 @@ from typing import List, Dict, Optional, Callable
 
 class SequencePlayer:
     STEPS_BASE = 20
+    SMOOTH_STEP_SIZE = 1
+    SMOOTH_DELAY_MS = 10
 
     def __init__(self, robot_arm, log_callback: Optional[Callable] = None):
         self._arm = robot_arm
@@ -173,7 +175,8 @@ class SequencePlayer:
                 if self._stop_event.is_set():
                     self._log("Reproducción detenida")
                     return
-                self._arm.move_all(frame)
+                self._arm.move_all_ramped(frame, step_size=self.SMOOTH_STEP_SIZE,
+                                          delay_ms=self.SMOOTH_DELAY_MS)
                 time.sleep(delay)
             self._log("Reproducción finalizada")
         finally:

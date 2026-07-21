@@ -62,6 +62,9 @@ class RobotArm:
             angle = max(RobotArm.GRIPPER_MIN_ANGLE, min(RobotArm.GRIPPER_MAX_ANGLE, angle))
         return angle
 
+    DEFAULT_STEP_SIZE = 1
+    DEFAULT_DELAY_MS = 10
+
     def move(self, servo_id: int, angle: int) -> bool:
         if servo_id < 0 or servo_id >= self._num_servos:
             return False
@@ -70,6 +73,19 @@ class RobotArm:
         return self._transport.send(servo_id, angle)
 
     def move_all(self, angles: List[int]) -> bool:
+        targets = []
+        n = min(len(angles), self._num_servos)
+        for i in range(n):
+            targets.append(self.validate_angle(angles[i], i))
+        while len(targets) < self._num_servos:
+            targets.append(self._current_angles[len(targets)])
+        needs_move = any(self._current_angles[i] != targets[i] for i in range(self._num_servos))
+        if needs_move:
+            self.move_all_ramped(targets, step_size=self.DEFAULT_STEP_SIZE,
+                                 delay_ms=self.DEFAULT_DELAY_MS)
+        return True
+
+    def move_all_immediate(self, angles: List[int]) -> bool:
         results = []
         n = min(len(angles), self._num_servos)
         for i in range(n):
@@ -133,8 +149,8 @@ class RobotArm:
             self._ramp_active = False
             self._ramp_thread = None
 
-    def move_all_ramped(self, target_angles: List[int], step_size: int = 5,
-                        delay_ms: int = 100, callback: Optional[Callable] = None):
+    def move_all_ramped(self, target_angles: List[int], step_size: int = 1,
+                        delay_ms: int = 10, callback: Optional[Callable] = None):
         self.cancel_ramp()
         self._wait_for_ramp_thread()
 
@@ -173,7 +189,7 @@ class RobotArm:
                             angle = round(current[i] + (targets[i] - current[i]) * t)
                         angle = self.validate_angle(angle, i)
                         frame.append(angle)
-                    self.move_all(frame)
+                    self.move_all_immediate(frame)
                     if self._ramp_progress_callback:
                         try:
                             self._ramp_progress_callback(frame)
@@ -192,8 +208,8 @@ class RobotArm:
         self._ramp_thread = threading.Thread(target=_ramp_worker, daemon=True)
         self._ramp_thread.start()
 
-    def move_ramped(self, servo_id: int, target_angle: int, step_size: int = 5,
-                    delay_ms: int = 100, callback: Optional[Callable] = None):
+    def move_ramped(self, servo_id: int, target_angle: int, step_size: int = 1,
+                    delay_ms: int = 10, callback: Optional[Callable] = None):
         if servo_id < 0 or servo_id >= self._num_servos:
             return
         target_angle = self.validate_angle(target_angle, servo_id)
@@ -202,12 +218,16 @@ class RobotArm:
         self.move_all_ramped(angles, step_size=step_size, delay_ms=delay_ms,
                              callback=callback)
 
-    def home_ramped(self, step_size: int = 5, delay_ms: int = 100,
+    def home_ramped(self, step_size: int = 1, delay_ms: int = 10,
                     callback: Optional[Callable] = None):
         self.move_all_ramped([0] * self._num_servos, step_size=step_size,
                              delay_ms=delay_ms, callback=callback)
 
-    def emergency_ramped(self, step_size: int = 10, delay_ms: int = 30,
-                         callback: Optional[Callable] = None):
-        self.move_all_ramped([0] * self._num_servos, step_size=step_size,
-                             delay_ms=delay_ms, callback=callback)
+    def emergency_stop(self, callback: Optional[Callable] = None):
+        self.cancel_ramp()
+        self.move_all_immediate([0] * self._num_servos)
+        if callback:
+            try:
+                callback()
+            except Exception:
+                pass

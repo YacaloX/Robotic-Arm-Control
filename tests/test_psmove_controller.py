@@ -182,11 +182,13 @@ class TestPSMoveUpdateTarget(unittest.TestCase):
     def test_center_orientation(self):
         self.ctrl._orientation = (0.0, 0.0)
         self.ctrl._trigger_value = 0.0
+        self.ctrl._yaw_angle = 0.0
         self.ctrl._update_target()
         target = self.ctrl.read_target()
         self.assertIsNotNone(target)
         self.assertEqual(target[0], 0)
         self.assertEqual(target[1], 0)
+        self.assertEqual(target[3], 0)
         self.assertEqual(target[5], -20)
 
     def test_positive_pitch(self):
@@ -227,6 +229,14 @@ class TestPSMoveUpdateTarget(unittest.TestCase):
         target = self.ctrl.read_target()
         self.assertEqual(target[0], -90)
         self.assertEqual(target[1], 90)
+
+    def test_yaw_maps_to_servo3(self):
+        self.ctrl._orientation = (0.0, 0.0)
+        self.ctrl._trigger_value = 0.0
+        self.ctrl._yaw_angle = 30.0
+        self.ctrl._update_target()
+        target = self.ctrl.read_target()
+        self.assertEqual(target[3], 60)
 
 
 class TestPSMoveGetters(unittest.TestCase):

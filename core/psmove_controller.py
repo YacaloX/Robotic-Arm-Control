@@ -1,11 +1,13 @@
 import threading
 import math
+import time
 from core.motion_controller import MotionController
 
 
 class PSMoveController(MotionController):
     POLL_INTERVAL = 1.0 / 60.0
     ACCEL_SCALE = 4.0
+    GYRO_SCALE = 3000.0
     TRIGGER_THRESHOLD = 0.1
     GRIPPER_SERVO_ID = 5
     GRIPPER_MIN_ANGLE = -20
@@ -19,9 +21,14 @@ class PSMoveController(MotionController):
         self._orientation = (0.0, 0.0)
         self._position = (0.0, 0.0, 0.0)
         self._trigger_value = 0.0
-        self._move_held = False
+        self._move_prev_held = False
+        self._yaw_angle = 0.0
+        self._last_gyro_time = None
         self._poll_thread = None
         self._psmoveapi = None
+        self._filtered_pitch = 0.0
+        self._filtered_roll = 0.0
+        self._filter_alpha = 0.65
 
     @property
     def available(self) -> bool:
@@ -113,11 +120,24 @@ class PSMoveController(MotionController):
                     az = accel.z / outer.ACCEL_SCALE
 
                     az_clamped = max(0.01, abs(az))
-                    pitch = math.degrees(math.atan2(ax, math.sqrt(ay ** 2 + az_clamped ** 2)))
-                    roll = math.degrees(math.atan2(ay, math.sqrt(ax ** 2 + az_clamped ** 2)))
-                    pitch = max(-90.0, min(90.0, pitch))
-                    roll = max(-90.0, min(90.0, roll))
-                    outer._orientation = (pitch, roll)
+                    raw_pitch = math.degrees(math.atan2(ax, math.sqrt(ay ** 2 + az_clamped ** 2)))
+                    raw_roll = math.degrees(math.atan2(ay, math.sqrt(ax ** 2 + az_clamped ** 2)))
+                    raw_pitch = max(-90.0, min(90.0, raw_pitch))
+                    raw_roll = max(-90.0, min(90.0, raw_roll))
+                    outer._filtered_pitch += outer._filter_alpha * (raw_pitch - outer._filtered_pitch)
+                    outer._filtered_roll += outer._filter_alpha * (raw_roll - outer._filtered_roll)
+                    outer._orientation = (outer._filtered_pitch, outer._filtered_roll)
+                except Exception:
+                    pass
+
+                try:
+                    gyro = controller.gyroscope
+                    now = time.monotonic()
+                    if outer._last_gyro_time is not None:
+                        dt = now - outer._last_gyro_time
+                        outer._yaw_angle += (gyro.z / outer.GYRO_SCALE) * dt
+                        outer._yaw_angle = max(-90.0, min(90.0, outer._yaw_angle))
+                    outer._last_gyro_time = now
                 except Exception:
                     pass
 
@@ -127,7 +147,10 @@ class PSMoveController(MotionController):
                     pass
 
                 try:
-                    outer._move_held = controller.now_pressed(psmoveapi.Button.MOVE)
+                    move_now = controller.now_pressed(psmoveapi.Button.MOVE)
+                    if move_now and not outer._move_prev_held:
+                        outer._yaw_angle = 0.0
+                    outer._move_prev_held = move_now
                 except Exception:
                     pass
 
@@ -178,18 +201,28 @@ class PSMoveController(MotionController):
         trigger = self._trigger_value
 
         target = [None] * 6
-        target[0] = max(-90, min(90, round(roll * 2)))
 
-        if self._move_held:
-            target[4] = max(-90, min(90, round(pitch * 2)))
-        else:
-            target[1] = max(-90, min(90, round(pitch * 2)))
+        target[0] = max(-90, min(90, round(roll * 2)))
+        target[1] = max(-90, min(90, round(pitch * 2)))
+        target[3] = max(-90, min(90, round(self._yaw_angle * 2)))
 
         gripper_range = self.GRIPPER_MAX_ANGLE - self.GRIPPER_MIN_ANGLE
         target[5] = max(self.GRIPPER_MIN_ANGLE, min(self.GRIPPER_MAX_ANGLE,
                         round(self.GRIPPER_MIN_ANGLE + trigger * gripper_range)))
 
         self._put_target(target)
+
+    def get_axis_mapping(self):
+        return {
+            "roll": {"servo": 0, "name": "Base"},
+            "pitch": {"servo": 1, "name": "Hombro"},
+            "yaw": {"servo": 3, "name": "Rotacion Muneca"},
+            "trigger": {"servo": 5, "name": "Pinza"},
+            "unmapped": [
+                {"servo": 2, "name": "Codo"},
+                {"servo": 4, "name": "Inclinacion Muneca"},
+            ],
+        }
 
     def disconnect(self):
         self.stop()

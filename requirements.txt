@@ -3,3 +3,5 @@ pyserial>=3.5,<4.0.0
 pybluez>=0.23
 wiimote.py
 numpy>=1.20
+opencv-python>=4.8.0
+Pillow>=10.0.0
